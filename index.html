@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>齿轮分析系统 - Gear Analysis System</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- 顶部标题栏 -->
+        <header class="header">
+            <div class="header-content">
+                <h1 class="logo">
+                    <span class="icon">⚙</span>
+                    <span>齿轮分析系统</span>
+                    <span class="subtitle">Gear Analysis System</span>
+                </h1>
+                <div class="header-actions">
+                    <button class="btn btn-secondary" id="resetBtn">重置</button>
+                    <button class="btn btn-primary" id="calculateBtn">计算</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- 主内容区 - 使用可折叠面板 -->
+        <div class="main-content">
+            <!-- 左侧：输入和可视化 -->
+            <div class="left-section">
+                <!-- 输入参数面板 -->
+                <div class="collapsible-panel active">
+                    <div class="panel-header-toggle" data-panel="input">
+                        <h2>输入参数</h2>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                    <div class="panel-content">
+                        <!-- 文件上传 -->
+                        <div class="input-section">
+                            <label for="profileFile">轮廓文件 (TXT/CSV)</label>
+                            <div class="file-upload-container">
+                                <input type="file" id="profileFile" accept=".txt,.csv" style="display: none;">
+                                <button class="btn btn-outline" id="fileSelectBtn">选择文件</button>
+                                <span class="file-name" id="fileName">未选择文件</span>
+                            </div>
+                            <div class="file-info" id="fileInfo"></div>
+                        </div>
+
+                        <!-- CAD文件上传 -->
+                        <div class="input-section">
+                            <label for="cadFile">CAD图纸文件 (DXF)</label>
+                            <div class="file-upload-container">
+                                <input type="file" id="cadFile" accept=".dxf" style="display: none;">
+                                <button class="btn btn-outline" id="cadFileSelectBtn">选择CAD文件</button>
+                                <span class="file-name" id="cadFileName">未选择文件</span>
+                            </div>
+                            <div class="file-info" id="cadFileInfo"></div>
+                        </div>
+
+                        <!-- 测量参数 -->
+                        <div class="input-grid">
+                            <div class="input-group">
+                                <label for="ballDiameter">量棒直径 (mm)</label>
+                                <input type="number" id="ballDiameter" value="3" min="0.1" step="0.1">
+                            </div>
+                            <div class="input-group">
+                                <label for="pitchDiameterInput">分度圆直径 (mm)</label>
+                                <input type="number" id="pitchDiameterInput" value="" min="0.1" step="0.1">
+                            </div>
+                        </div>
+
+                        <div class="button-group">
+                            <button class="btn btn-outline" id="clearBtn">清空数据</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 轮廓可视化面板 -->
+                <div class="collapsible-panel active">
+                    <div class="panel-header-toggle" data-panel="visualization">
+                        <h2>轮廓可视化</h2>
+                        <div class="panel-header-right">
+                            <div class="view-controls">
+                                <button class="btn-icon" id="zoomInBtn" title="放大">+</button>
+                                <button class="btn-icon" id="zoomOutBtn" title="缩小">-</button>
+                                <button class="btn-icon" id="resetViewBtn" title="重置视图">⌂</button>
+                            </div>
+                            <span class="toggle-icon">▼</span>
+                        </div>
+                    </div>
+                    <div class="panel-content">
+                        <div class="canvas-container">
+                            <canvas id="gearCanvas"></canvas>
+                            <div class="canvas-overlay" id="canvasOverlay">
+                                <div class="overlay-info">
+                                    <div class="info-item">
+                                        <span class="info-label">视图比例:</span>
+                                        <span class="info-value" id="zoomLevel">1.0x</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：计算结果 -->
+            <div class="right-section">
+                <!-- 基本参数面板 -->
+                <div class="collapsible-panel active">
+                    <div class="panel-header-toggle" data-panel="basicParams">
+                        <h2>基本参数</h2>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                    <div class="panel-content">
+                        <div class="result-table">
+                            <div class="result-row">
+                                <span class="result-label">齿数 (Z)</span>
+                                <span class="result-value" id="toothCountResult">-</span>
+                                <span class="result-unit">齿</span>
+                            </div>
+                            <div class="result-row">
+                                <span class="result-label">分度圆直径</span>
+                                <span class="result-value" id="pitchDiameter">-</span>
+                                <span class="result-unit">mm</span>
+                            </div>
+                            <div class="result-row">
+                                <span class="result-label">齿顶圆直径</span>
+                                <span class="result-value" id="addendumDiameter">-</span>
+                                <span class="result-unit">mm</span>
+                            </div>
+                            <div class="result-row">
+                                <span class="result-label">齿根圆直径</span>
+                                <span class="result-value" id="dedendumDiameter">-</span>
+                                <span class="result-unit">mm</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 跨棒距参数面板 -->
+                <div class="collapsible-panel active">
+                    <div class="panel-header-toggle" data-panel="spanParams">
+                        <h2>跨棒距分析</h2>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                    <div class="panel-content">
+                        <div class="result-table">
+                            <div class="result-row highlight">
+                                <span class="result-label">跨棒距 (M)</span>
+                                <span class="result-value" id="spanMeasurement">-</span>
+                                <span class="result-unit">mm</span>
+                            </div>
+                            <div class="result-row">
+                                <span class="result-label">跨齿数</span>
+                                <span class="result-value" id="spanTeeth">-</span>
+                                <span class="result-unit">齿</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 跨棒距曲线图 -->
+                <div class="collapsible-panel">
+                    <div class="panel-header-toggle" data-panel="spanPlot">
+                        <h2>跨棒距曲线图</h2>
+                        <span class="toggle-icon">▶</span>
+                    </div>
+                    <div class="panel-content" style="display: none;">
+                        <div class="plot-container">
+                            <canvas id="spanPlotCanvas"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 齿距误差分析 -->
+                <div class="collapsible-panel">
+                    <div class="panel-header-toggle" data-panel="pitchError">
+                        <h2>齿距误差分析</h2>
+                        <span class="toggle-icon">▶</span>
+                    </div>
+                    <div class="panel-content" style="display: none;">
+                        <div class="result-table">
+                            <div class="result-row">
+                                <span class="result-label">单个齿距误差 (fp)</span>
+                                <span class="result-value" id="singlePitchError">-</span>
+                                <span class="result-unit">μm</span>
+                            </div>
+                            <div class="result-row">
+                                <span class="result-label">累计齿距误差 (Fp)</span>
+                                <span class="result-value" id="cumulativePitchError">-</span>
+                                <span class="result-unit">μm</span>
+                            </div>
+                        </div>
+                        <div class="plot-container">
+                            <canvas id="pitchErrorCanvas"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 轮廓度误差分析 -->
+                <div class="collapsible-panel">
+                    <div class="panel-header-toggle" data-panel="profileError">
+                        <h2>轮廓度误差分析</h2>
+                        <span class="toggle-icon">▶</span>
+                    </div>
+                    <div class="panel-content" style="display: none;">
+                        <div class="result-table">
+                            <div class="result-row highlight">
+                                <span class="result-label">轮廓度误差 (最大偏差)</span>
+                                <span class="result-value" id="profileError">-</span>
+                                <span class="result-unit">μm</span>
+                            </div>
+                            <div class="result-row">
+                                <span class="result-label">配准状态</span>
+                                <span class="result-value" id="registrationStatus">-</span>
+                                <span class="result-unit"></span>
+                            </div>
+                        </div>
+                        <div class="button-group">
+                            <button class="btn btn-outline" id="registerBtn">执行配准</button>
+                        </div>
+                        <div class="plot-container">
+                            <canvas id="profileErrorCanvas"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 齿轮等级评定 -->
+                <div class="collapsible-panel">
+                    <div class="panel-header-toggle" data-panel="grade">
+                        <h2>齿轮等级评定</h2>
+                        <span class="toggle-icon">▶</span>
+                    </div>
+                    <div class="panel-content" style="display: none;">
+                        <div class="result-table">
+                            <div class="result-row">
+                                <span class="result-label">ISO 等级</span>
+                                <span class="result-value" id="isoGrade">-</span>
+                                <span class="result-unit"></span>
+                            </div>
+                            <div class="result-row">
+                                <span class="result-label">JIS 等级</span>
+                                <span class="result-value" id="jisGrade">-</span>
+                                <span class="result-unit"></span>
+                            </div>
+                            <div class="result-row">
+                                <span class="result-label">GBK 等级</span>
+                                <span class="result-value" id="gbkGrade">-</span>
+                                <span class="result-unit"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 状态信息 -->
+                <div class="status-section">
+                    <div class="status-indicator" id="statusIndicator">
+                        <span class="status-dot"></span>
+                        <span class="status-text">就绪</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="gear-calculator.js"></script>
+    <script src="gear-visualizer.js"></script>
+    <script src="gear-analysis.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
