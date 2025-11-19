@@ -58,12 +58,13 @@ class GearCircleFitting {
 
     /**
      * 拟合齿顶圆和齿根圆
+     * 齿顶圆 = 最大半径，齿根圆 = 最小半径
      * @param {Array<{x: number, y: number}>} points - 轮廓点
-     * @param {number} toothCount - 齿数
+     * @param {number} toothCount - 齿数（未使用，保留兼容性）
      * @returns {{addendumRadius: number, dedendumRadius: number, centerX: number, centerY: number}} 拟合结果
      */
     fitAddendumAndDedendumCircles(points, toothCount) {
-        if (points.length < 3 || toothCount < 1) return null;
+        if (points.length < 3) return null;
 
         // 计算中心点
         const centerX = points.reduce((sum, p) => sum + p.x, 0) / points.length;
@@ -76,25 +77,22 @@ class GearCircleFitting {
             return Math.sqrt(dx * dx + dy * dy);
         });
 
-        // 按距离排序，找到局部最大值（齿顶）和局部最小值（齿根）
-        const sortedIndices = distances.map((d, i) => ({ d, i }))
-            .sort((a, b) => a.d - b.d);
+        // 找到最大半径（齿顶圆）和最小半径（齿根圆）
+        const maxRadius = Math.max(...distances);
+        const minRadius = Math.min(...distances);
 
-        // 使用分位数方法：上25%作为齿顶圆，下25%作为齿根圆
-        const sortedDistances = sortedIndices.map(item => item.d);
-        const q75 = sortedDistances[Math.floor(sortedDistances.length * 0.75)];
-        const q25 = sortedDistances[Math.floor(sortedDistances.length * 0.25)];
-
-        // 提取齿顶和齿根区域的点进行拟合
-        const addendumPoints = points.filter((p, i) => distances[i] >= q75);
-        const dedendumPoints = points.filter((p, i) => distances[i] <= q25);
-
-        const addendumCircle = this.fitCircle(addendumPoints);
-        const dedendumCircle = this.fitCircle(dedendumPoints);
+        console.log('齿顶圆和齿根圆计算:', {
+            centerX: centerX.toFixed(3),
+            centerY: centerY.toFixed(3),
+            maxRadius: maxRadius.toFixed(3),
+            minRadius: minRadius.toFixed(3),
+            addendumDiameter: (maxRadius * 2).toFixed(3),
+            dedendumDiameter: (minRadius * 2).toFixed(3)
+        });
 
         return {
-            addendumRadius: addendumCircle ? addendumCircle.radius : q75,
-            dedendumRadius: dedendumCircle ? dedendumCircle.radius : q25,
+            addendumRadius: maxRadius,  // 最大半径 = 齿顶圆
+            dedendumRadius: minRadius,  // 最小半径 = 齿根圆
             centerX,
             centerY
         };
