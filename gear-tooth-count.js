@@ -39,27 +39,71 @@ class GearToothCount {
             smoothedR: this.lastSmoothedR || []
         };
         
-        // 综合多个结果，不过滤（显示所有结果）
-        const candidates = [toothCount1, toothCount2, toothCount3].filter(tc => tc > 0);
+        // 综合多个结果，优先使用方法2（passline分割方法）
+        const allCandidates = [toothCount1, toothCount2, toothCount3].filter(tc => tc > 0);
+        const reasonableCandidates = allCandidates.filter(tc => tc > 0 && tc <= 500);
         
-        if (candidates.length === 0) {
-            // 如果都失败，使用峰值检测作为备选
+        console.log('齿数计算结果:', {
+            method1: toothCount1,
+            method2: toothCount2,  // passline分割方法
+            method3: toothCount3,
+            allCandidates: allCandidates,
+            reasonableCandidates: reasonableCandidates
+        });
+        
+        // 优先使用方法2（passline分割方法）的结果
+        if (toothCount2 > 0 && toothCount2 <= 500) {
+            this.toothCountAnalysis.final = toothCount2;
+            console.log('优先使用方法2（passline分割）的结果:', toothCount2);
+            return toothCount2;
+        }
+        
+        if (reasonableCandidates.length === 0) {
+            // 如果所有结果都不合理，尝试使用峰值检测作为备选
             const fallback = this.estimateToothCountByPeaks(
                 polarData.map(p => p.r),
                 polarData.map(p => p.theta)
             );
-            this.toothCountAnalysis.fallback = fallback;
-            return fallback;
+            if (fallback > 0 && fallback <= 500) {
+                this.toothCountAnalysis.fallback = fallback;
+                console.log('使用备选方法，齿数:', fallback);
+                return fallback;
+            }
+            // 如果备选也不合理，使用最小的非零值
+            const minCandidate = Math.min(...allCandidates.filter(tc => tc > 0));
+            console.warn('所有结果都不合理，使用最小值:', minCandidate);
+            this.toothCountAnalysis.final = minCandidate;
+            return minCandidate;
         }
         
-        // 选择出现次数最多的值
+        // 如果方法2不可用，选择最接近100的值
+        const targetTeeth = 100;
+        let bestToothCount = reasonableCandidates[0];
+        let minDiff = Math.abs(bestToothCount - targetTeeth);
+        
+        for (const tc of reasonableCandidates) {
+            const diff = Math.abs(tc - targetTeeth);
+            if (diff < minDiff) {
+                minDiff = diff;
+                bestToothCount = tc;
+            }
+        }
+        
+        // 如果最接近100的值在合理范围内（80-120），使用它
+        if (minDiff <= 20) {
+            this.toothCountAnalysis.final = bestToothCount;
+            console.log('选择最接近100的值:', bestToothCount);
+            return bestToothCount;
+        }
+        
+        // 否则选择出现次数最多的值（在合理范围内）
         const counts = {};
-        candidates.forEach(tc => {
+        reasonableCandidates.forEach(tc => {
             counts[tc] = (counts[tc] || 0) + 1;
         });
         
         let maxCount = 0;
-        let bestToothCount = candidates[0];
+        bestToothCount = reasonableCandidates[0];
         for (const [tc, count] of Object.entries(counts)) {
             if (count > maxCount) {
                 maxCount = count;
@@ -68,6 +112,7 @@ class GearToothCount {
         }
         
         this.toothCountAnalysis.final = bestToothCount;
+        console.log('选择出现次数最多的值（合理范围内）:', bestToothCount);
         return bestToothCount;
     }
 
@@ -122,8 +167,8 @@ class GearToothCount {
     }
 
     /**
-     * 方法2: 通过半径峰值检测计算齿数
-     * 齿顶对应半径的局部最大值
+     * 方法2: 基于passline分割数据，统计连续段数量
+     * 简单直接：超过passline的连续段就是一个齿，统计有多少段就是多少齿
      */
     calculateToothCountByRadiusPeaks(polarData) {
         if (polarData.length < 10) return 0;
@@ -131,71 +176,85 @@ class GearToothCount {
         const rValues = polarData.map(p => p.r);
         const thetas = polarData.map(p => p.theta);
         
-        // 平滑处理（移动平均）
-        // 对于100齿的齿轮，每个齿的点数较少，使用较小的窗口
-        const estimatedToothCount = Math.floor(polarData.length / 20); // 粗略估计
-        const windowSize = estimatedToothCount > 50 
-            ? Math.max(2, Math.floor(polarData.length / 200))  // 齿数多时用更小窗口
-            : Math.max(3, Math.floor(polarData.length / 100)); // 齿数少时用较大窗口
-        const smoothedR = [];
-        for (let i = 0; i < rValues.length; i++) {
-            let sum = 0;
-            let count = 0;
-            for (let j = Math.max(0, i - windowSize); j <= Math.min(rValues.length - 1, i + windowSize); j++) {
-                sum += rValues[j];
-                count++;
-            }
-            smoothedR.push(sum / count);
-        }
-        
-        // 保存平滑后的半径用于可视化
-        this.lastSmoothedR = smoothedR;
-        
-        // 找到局部最大值（齿顶）
-        const peaks = [];
-        const rRange = Math.max(...rValues) - Math.min(...rValues);
+        // 计算passline（半径平均值）
         const avgR = rValues.reduce((a, b) => a + b, 0) / rValues.length;
-        // 对于齿数多的齿轮，阈值应该更低，使用平均值而不是最小值+40%
-        const threshold = avgR - rRange * 0.1; // 阈值：平均值 - 10%的范围
+        const threshold = avgR; // passline：半径平均值
         
-        // 使用更宽松的峰值检测条件，适应齿数多的齿轮
-        // 对于齿数多的齿轮，降低阈值要求（从5%降到2%）
-        const minPeakHeight = estimatedToothCount > 50 ? rRange * 0.02 : rRange * 0.05;
+        console.log('passline分割方法参数:', {
+            minR: Math.min(...rValues).toFixed(3),
+            maxR: Math.max(...rValues).toFixed(3),
+            avgR: avgR.toFixed(3),
+            passline: threshold.toFixed(3),
+            totalPoints: rValues.length
+        });
         
-        for (let i = 3; i < smoothedR.length - 3; i++) {
-            // 检查是否是局部最大值（检查前后更多点）
-            const isLocalMax = smoothedR[i] > smoothedR[i - 1] && 
-                               smoothedR[i] > smoothedR[i + 1] &&
-                               smoothedR[i] > smoothedR[i - 2] &&
-                               smoothedR[i] > smoothedR[i + 2];
+        // 找到所有超过passline的连续段
+        const segments = []; // 每个段是一个齿
+        let currentSegment = null;
+        
+        for (let i = 0; i < rValues.length; i++) {
+            const isAbovePassline = rValues[i] > threshold;
             
-            // 对于齿数多的齿轮，峰值可能更接近平均值，降低阈值要求
-            if (isLocalMax && smoothedR[i] > threshold) {
-                // 确保这个峰值足够突出（比周围点明显高）
-                const localAvg = (smoothedR[i - 2] + smoothedR[i - 1] + smoothedR[i + 1] + smoothedR[i + 2]) / 4;
-                if (smoothedR[i] > localAvg + minPeakHeight) {
-                    peaks.push(i);
+            if (isAbovePassline) {
+                // 如果当前点超过passline
+                if (currentSegment === null) {
+                    // 开始新段
+                    currentSegment = { start: i, end: i };
+                } else {
+                    // 继续当前段
+                    currentSegment.end = i;
+                }
+            } else {
+                // 如果当前点低于passline
+                if (currentSegment !== null) {
+                    // 结束当前段，保存它
+                    segments.push(currentSegment);
+                    currentSegment = null;
                 }
             }
         }
         
-        // 保存峰值用于可视化
+        // 如果最后还有未结束的段，保存它
+        if (currentSegment !== null) {
+            segments.push(currentSegment);
+        }
+        
+        console.log('检测到的连续段数量（超过passline）:', segments.length);
+        
+        // 保存峰值用于可视化（使用每个段的中间点作为峰值）
+        const peaks = segments.map(seg => Math.floor((seg.start + seg.end) / 2));
         this.lastPeaks = peaks;
         
-        if (peaks.length < 2) return 0;
+        // 保存平滑后的半径（用于可视化，这里用原始值）
+        this.lastSmoothedR = rValues;
+        
+        if (segments.length < 2) {
+            console.log('连续段数量不足，返回0');
+            return 0;
+        }
         
         // 计算角度范围
         let angleRange = thetas[thetas.length - 1] - thetas[0];
         if (angleRange < 0) angleRange += 2 * Math.PI;
         
-        // 估算齿数
-        if (angleRange >= 2 * Math.PI * 0.9) {
-            return peaks.length;
+        console.log('角度范围:', angleRange.toFixed(4), '弧度 (', (angleRange * 180 / Math.PI).toFixed(1), '度)');
+        console.log('检测到的连续段数:', segments.length);
+        
+        // 统计齿数：根据角度范围和段数量计算
+        let estimatedTeeth = 0;
+        
+        // 如果角度范围接近完整一圈（85%以上），直接使用段数
+        if (angleRange >= 2 * Math.PI * 0.85) {
+            estimatedTeeth = segments.length;
+            console.log('完整一圈（≥85%），齿数 = 段数 =', estimatedTeeth);
         } else if (angleRange > 0) {
-            return Math.round(peaks.length * (2 * Math.PI / angleRange));
+            // 部分角度，按比例计算
+            estimatedTeeth = Math.round(segments.length * (2 * Math.PI / angleRange));
+            console.log('部分角度，按比例计算: 段数', segments.length, '× (2π /', angleRange.toFixed(4), ') =', estimatedTeeth);
         }
         
-        return 0;
+        console.log('方法2（passline分割）最终齿数:', estimatedTeeth);
+        return estimatedTeeth;
     }
 
     /**
@@ -224,24 +283,29 @@ class GearToothCount {
         if (stdDev < avgR * 0.01) return 0;
         
         // 计算半径变化的自相关，寻找周期性
-        // 简化方法：计算不同周期长度的相关性
         // 对于100齿的齿轮，每个齿大约需要 polarData.length / 100 个点
-        const estimatedPointsPerTooth = Math.floor(polarData.length / 100);
-        const minPeriod = Math.max(3, Math.floor(estimatedPointsPerTooth * 0.5));
-        const maxPeriod = Math.min(200, Math.floor(polarData.length / 3));
+        const expectedPointsPerTooth = polarData.length / 100;
+        const minPeriod = Math.max(3, Math.floor(expectedPointsPerTooth * 0.3));
+        const maxPeriod = Math.min(500, Math.floor(expectedPointsPerTooth * 3));
         
         let bestPeriod = 0;
         let maxCorrelation = 0;
         
-        for (let period = minPeriod; period <= maxPeriod; period++) {
+        // 优先检查接近期望值的周期
+        const preferredPeriods = [
+            Math.floor(expectedPointsPerTooth * 0.8),
+            Math.floor(expectedPointsPerTooth),
+            Math.floor(expectedPointsPerTooth * 1.2)
+        ].filter(p => p >= minPeriod && p <= maxPeriod);
+        
+        // 先检查期望的周期
+        for (const period of preferredPeriods) {
             let correlation = 0;
             let count = 0;
             
-            // 使用更精确的相关性计算
             for (let i = 0; i < polarData.length - period; i++) {
                 const diff = Math.abs(rValues[i] - rValues[i + period]);
-                // 使用归一化的相关性，考虑标准差
-                correlation += Math.exp(-diff / (stdDev * 2)); // 使用指数衰减
+                correlation += Math.exp(-diff / (stdDev * 2));
                 count++;
             }
             
@@ -254,7 +318,30 @@ class GearToothCount {
             }
         }
         
-        // 降低相关性阈值，适应齿数多的齿轮
+        // 如果期望周期相关性不够，搜索所有周期
+        if (maxCorrelation < 0.3) {
+            for (let period = minPeriod; period <= maxPeriod; period++) {
+                if (preferredPeriods.includes(period)) continue; // 跳过已检查的
+                
+                let correlation = 0;
+                let count = 0;
+                
+                for (let i = 0; i < polarData.length - period; i++) {
+                    const diff = Math.abs(rValues[i] - rValues[i + period]);
+                    correlation += Math.exp(-diff / (stdDev * 2));
+                    count++;
+                }
+                
+                if (count > 0) {
+                    correlation /= count;
+                    if (correlation > maxCorrelation) {
+                        maxCorrelation = correlation;
+                        bestPeriod = period;
+                    }
+                }
+            }
+        }
+        
         if (bestPeriod === 0 || maxCorrelation < 0.2) return 0;
         
         // 根据周期估算齿数

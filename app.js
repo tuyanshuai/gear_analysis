@@ -9,6 +9,18 @@ let visualizer;
 let basicParamsVisualizer; // 基本参数tab的可视化器
 let analyzer;
 
+// r(θ)图的视图状态
+let rThetaViewState = {
+    offsetX: 0,      // 水平偏移（像素）
+    scale: 1,        // 缩放比例
+    isDragging: false,
+    dragStartX: 0,
+    dragStartOffset: 0,
+    minTheta: 0,
+    maxTheta: 0,
+    thetaRange: 0
+};
+
 document.addEventListener('DOMContentLoaded', async () => {
     // 检查所有必需的类是否已加载
     console.log('========== 检查依赖类 ==========');
@@ -977,26 +989,40 @@ function drawRThetaPlot() {
     const rValues = polarData.map(p => p.r);
     const minTheta = Math.min(...thetas);
     const maxTheta = Math.max(...thetas);
+    const thetaRange = maxTheta - minTheta || 1;
     const minR = Math.min(...rValues);
     const maxR = Math.max(...rValues);
     const rRange = maxR - minR || 1;
     
     console.log('数据范围:');
-    console.log('  theta: [', minTheta.toFixed(4), ',', maxTheta.toFixed(4), ']');
+    console.log('  theta: [', minTheta.toFixed(4), ',', maxTheta.toFixed(4), '], range:', thetaRange.toFixed(4));
     console.log('  r: [', minR.toFixed(4), ',', maxR.toFixed(4), '], range:', rRange.toFixed(4));
-
-    // 设置边距（调整以适应较低的高度）
-    const padding = { top: 30, right: 20, bottom: 50, left: 60 };
+    
+    // 设置边距（简化布局）
+    const padding = { top: 20, right: 15, bottom: 35, left: 50 };
     const plotWidth = width - padding.left - padding.right;
     const plotHeight = height - padding.top - padding.bottom;
+    
+    // 保存数据范围到视图状态
+    rThetaViewState.minTheta = minTheta;
+    rThetaViewState.maxTheta = maxTheta;
+    rThetaViewState.thetaRange = thetaRange;
+    
+    // 应用视图变换（缩放和平移）
+    // offsetX是像素偏移，需要转换为角度偏移
+    const pixelsPerTheta = plotWidth / thetaRange;
+    const thetaOffset = rThetaViewState.offsetX / pixelsPerTheta;
+    const viewMinTheta = minTheta - thetaOffset;
+    const viewMaxTheta = viewMinTheta + (thetaRange / rThetaViewState.scale);
+    const viewThetaRange = viewMaxTheta - viewMinTheta;
 
-    // 绘制背景
-    ctx.fillStyle = '#f9f9f9';
+    // 绘制背景（白色）
+    ctx.fillStyle = '#ffffff';
     ctx.fillRect(padding.left, padding.top, plotWidth, plotHeight);
 
-    // 绘制坐标轴
-    ctx.strokeStyle = '#333';
-    ctx.lineWidth = 1;
+    // 绘制坐标轴（更粗更清晰）
+    ctx.strokeStyle = '#333333';
+    ctx.lineWidth = 2;
     ctx.beginPath();
     // X轴（角度）
     ctx.moveTo(padding.left, padding.top + plotHeight);
@@ -1006,21 +1032,22 @@ function drawRThetaPlot() {
     ctx.lineTo(padding.left, padding.top + plotHeight);
     ctx.stroke();
 
-    // 绘制网格
-    ctx.strokeStyle = '#ddd';
-    ctx.lineWidth = 0.5;
-    // 垂直网格线（角度）
-    const thetaSteps = 8;
+    // 绘制网格（更淡，减少干扰）- 应用视图变换
+    ctx.strokeStyle = '#e8e8e8';
+    ctx.lineWidth = 1;
+    // 垂直网格线（角度）- 根据视图范围动态计算
+    const thetaSteps = 6;
     for (let i = 0; i <= thetaSteps; i++) {
+        const theta = viewMinTheta + (viewThetaRange * i / thetaSteps);
         const x = padding.left + (plotWidth * i / thetaSteps);
         ctx.beginPath();
         ctx.moveTo(x, padding.top);
         ctx.lineTo(x, padding.top + plotHeight);
         ctx.stroke();
     }
-    // 水平网格线（半径）
-    const rSteps = 5;
-    for (let i = 0; i <= rSteps; i++) {
+    // 水平网格线（半径）- 减少网格线数量
+    const rSteps = 4;
+    for (let i = 1; i < rSteps; i++) {
         const y = padding.top + (plotHeight * i / rSteps);
         ctx.beginPath();
         ctx.moveTo(padding.left, y);
@@ -1028,78 +1055,201 @@ function drawRThetaPlot() {
         ctx.stroke();
     }
 
-    // 绘制r(theta)曲线（排序后的数据）
+    // 绘制r(theta)曲线（排序后的数据）- 应用视图变换
     console.log('开始绘制r(theta)曲线，点数:', polarData.length);
+    console.log('视图范围: theta [', viewMinTheta.toFixed(4), ',', viewMaxTheta.toFixed(4), ']');
+    
+    // 只绘制可见范围内的点
     ctx.strokeStyle = '#0066cc';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
     let pointsDrawn = 0;
+    let firstPoint = true;
+    
     for (let i = 0; i < polarData.length; i++) {
-        const x = padding.left + ((thetas[i] - minTheta) / (maxTheta - minTheta || 1)) * plotWidth;
-        const y = padding.top + plotHeight - ((rValues[i] - minR) / rRange) * plotHeight;
-        if (i === 0) {
-            ctx.moveTo(x, y);
-        } else {
-            ctx.lineTo(x, y);
+        const theta = thetas[i];
+        // 只绘制在视图范围内的点
+        if (theta >= viewMinTheta && theta <= viewMaxTheta) {
+            const x = padding.left + ((theta - viewMinTheta) / viewThetaRange) * plotWidth;
+            const y = padding.top + plotHeight - ((rValues[i] - minR) / rRange) * plotHeight;
+            if (firstPoint) {
+                ctx.moveTo(x, y);
+                firstPoint = false;
+            } else {
+                ctx.lineTo(x, y);
+            }
+            pointsDrawn++;
         }
-        pointsDrawn++;
     }
     ctx.stroke();
-    console.log('已绘制', pointsDrawn, '个点');
+    console.log('已绘制', pointsDrawn, '个点（可见范围内）');
 
-    // 如果有分析数据，显示额外的信息
+    // 绘制passline（半径平均值线）- 应用视图变换
+    const avgR = rValues.reduce((a, b) => a + b, 0) / rValues.length;
+    const passlineY = padding.top + plotHeight - ((avgR - minR) / rRange) * plotHeight;
+    ctx.strokeStyle = '#ff9900';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(padding.left, passlineY);
+    ctx.lineTo(padding.left + plotWidth, passlineY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    
+    // 绘制passline标签
+    ctx.fillStyle = '#ff9900';
+    ctx.font = '10px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText('passline (平均值)', padding.left + plotWidth - 120, passlineY - 5);
+
+    // 如果有分析数据，显示峰值点 - 应用视图变换
     const analysis = analyzer.toothCountAnalysis;
-    if (analysis) {
-        // 绘制平滑后的r值（如果存在）
-        if (analysis.smoothedR && analysis.smoothedR.length > 0) {
-            ctx.strokeStyle = '#00aa00';
-            ctx.lineWidth = 1.5;
-            ctx.setLineDash([5, 5]);
-            ctx.beginPath();
-            for (let i = 0; i < analysis.smoothedR.length && i < polarData.length; i++) {
-                const x = padding.left + ((thetas[i] - minTheta) / (maxTheta - minTheta || 1)) * plotWidth;
-                const y = padding.top + plotHeight - ((analysis.smoothedR[i] - minR) / rRange) * plotHeight;
-                if (i === 0) {
-                    ctx.moveTo(x, y);
-                } else {
-                    ctx.lineTo(x, y);
-                }
-            }
-            ctx.stroke();
-            ctx.setLineDash([]);
-        }
-
-        // 绘制峰值点（齿顶）
-        if (analysis.peaks && analysis.peaks.length > 0) {
-            ctx.fillStyle = '#ff0000';
-            analysis.peaks.forEach(peakIdx => {
-                if (peakIdx < polarData.length) {
-                    const x = padding.left + ((thetas[peakIdx] - minTheta) / (maxTheta - minTheta || 1)) * plotWidth;
+    if (analysis && analysis.peaks && analysis.peaks.length > 0) {
+        // 绘制峰值点（齿顶，超过passline的点）- 只绘制可见范围内的
+        ctx.fillStyle = '#ff4444';
+        analysis.peaks.forEach(peakIdx => {
+            if (peakIdx < polarData.length) {
+                const theta = thetas[peakIdx];
+                // 只绘制在视图范围内的峰值
+                if (theta >= viewMinTheta && theta <= viewMaxTheta) {
+                    const x = padding.left + ((theta - viewMinTheta) / viewThetaRange) * plotWidth;
                     const y = padding.top + plotHeight - ((rValues[peakIdx] - minR) / rRange) * plotHeight;
                     ctx.beginPath();
-                    ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                    ctx.arc(x, y, 2, 0, 2 * Math.PI);
                     ctx.fill();
                 }
-            });
-        }
+            }
+        });
     }
 
-    // 绘制坐标轴标签
+    // 绘制坐标轴标签（更清晰）
     console.log('绘制坐标轴标签...');
-    ctx.fillStyle = '#333';
-    ctx.font = '12px Arial';
+    ctx.fillStyle = '#333333';
+    ctx.font = '11px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillText('角度 θ (弧度)', padding.left + plotWidth / 2, height - padding.bottom + 10);
+    ctx.fillText('角度 θ (rad)', padding.left + plotWidth / 2, height - padding.bottom + 8);
 
     ctx.save();
-    ctx.translate(15, padding.top + plotHeight / 2);
+    ctx.translate(12, padding.top + plotHeight / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.textAlign = 'center';
     ctx.fillText('半径 r (mm)', 0, 0);
     ctx.restore();
     
+    // 绘制刻度标签（简化）- 应用视图变换
+    ctx.font = '9px Arial';
+    ctx.fillStyle = '#666666';
+    ctx.textAlign = 'center';
+    // X轴刻度 - 使用视图范围
+    for (let i = 0; i <= thetaSteps; i++) {
+        const x = padding.left + (plotWidth * i / thetaSteps);
+        const thetaValue = viewMinTheta + (viewThetaRange * i / thetaSteps);
+        ctx.fillText(thetaValue.toFixed(2), x, height - padding.bottom + 18);
+    }
+    
+    // 绘制视图控制提示
+    ctx.fillStyle = '#999999';
+    ctx.font = '9px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText(`缩放: ${rThetaViewState.scale.toFixed(2)}x | 拖拽查看 | 滚轮缩放`, padding.left, 10);
+    // Y轴刻度
+    ctx.textAlign = 'right';
+    for (let i = 0; i <= rSteps; i++) {
+        const y = padding.top + (plotHeight * i / rSteps);
+        const rValue = minR + (maxR - minR) * (1 - i / rSteps);
+        ctx.fillText(rValue.toFixed(1), padding.left - 8, y + 4);
+    }
+    
     console.log('========== drawRThetaPlot 完成 ==========');
+    
+    // 设置交互事件（如果还没有设置）
+    setupRThetaInteractions(canvas);
+}
+
+/**
+ * 设置r(θ)图的交互功能（拖拽和缩放）
+ */
+function setupRThetaInteractions(canvas) {
+    // 避免重复绑定事件
+    if (canvas._rThetaInteractionsSetup) return;
+    canvas._rThetaInteractionsSetup = true;
+    
+    // 鼠标按下 - 开始拖拽
+    canvas.addEventListener('mousedown', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        rThetaViewState.isDragging = true;
+        rThetaViewState.dragStartX = x;
+        rThetaViewState.dragStartOffset = rThetaViewState.offsetX;
+        canvas.style.cursor = 'grabbing';
+    });
+    
+    // 鼠标移动 - 拖拽
+    canvas.addEventListener('mousemove', (e) => {
+        if (rThetaViewState.isDragging) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const deltaX = x - rThetaViewState.dragStartX;
+            rThetaViewState.offsetX = rThetaViewState.dragStartOffset + deltaX;
+            
+            // 限制拖拽范围（防止拖出边界）
+            const padding = { left: 50, right: 15 };
+            const plotWidth = canvas.width - padding.left - padding.right;
+            if (rThetaViewState.thetaRange > 0) {
+                const maxOffset = (rThetaViewState.thetaRange * (1 - 1 / rThetaViewState.scale)) * (plotWidth / rThetaViewState.thetaRange);
+                rThetaViewState.offsetX = Math.max(-maxOffset, Math.min(maxOffset, rThetaViewState.offsetX));
+            }
+            
+            drawRThetaPlot();
+        }
+    });
+    
+    // 鼠标释放 - 结束拖拽
+    canvas.addEventListener('mouseup', () => {
+        rThetaViewState.isDragging = false;
+        canvas.style.cursor = 'grab';
+    });
+    
+    // 鼠标离开 - 结束拖拽
+    canvas.addEventListener('mouseleave', () => {
+        rThetaViewState.isDragging = false;
+        canvas.style.cursor = 'default';
+    });
+    
+    // 滚轮缩放
+    canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const padding = { left: 50, right: 15 };
+        const plotWidth = canvas.width - padding.left - padding.right;
+        
+        // 计算鼠标位置对应的theta值（在缩放前）
+        if (rThetaViewState.thetaRange > 0) {
+            const oldScale = rThetaViewState.scale;
+            const pixelsPerTheta = plotWidth / (rThetaViewState.thetaRange / oldScale);
+            const thetaAtMouse = rThetaViewState.minTheta + 
+                ((x - padding.left) / pixelsPerTheta) + (rThetaViewState.offsetX / pixelsPerTheta);
+            
+            // 缩放
+            const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+            rThetaViewState.scale = Math.max(1, Math.min(20, rThetaViewState.scale * zoomFactor));
+            
+            // 调整offsetX，使鼠标位置的theta值保持不变
+            const newPixelsPerTheta = plotWidth / (rThetaViewState.thetaRange / rThetaViewState.scale);
+            const newThetaAtMouse = rThetaViewState.minTheta + 
+                ((x - padding.left) / newPixelsPerTheta) + (rThetaViewState.offsetX / newPixelsPerTheta);
+            
+            const thetaDiff = newThetaAtMouse - thetaAtMouse;
+            rThetaViewState.offsetX -= thetaDiff * newPixelsPerTheta;
+        }
+        
+        drawRThetaPlot();
+    });
+    
+    // 设置鼠标样式
+    canvas.style.cursor = 'grab';
 }
 
 /**
