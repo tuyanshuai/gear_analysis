@@ -290,11 +290,7 @@ function analyzeProfile() {
             drawRThetaPlot();
         }, 300);
 
-        // 5. 计算跨棒距
-        const ballDiameter = parseFloat(document.getElementById('ballDiameter').value) || 3;
-        if (toothCount > 0 && pitchDiameter > 0 && ballDiameter > 0) {
-            calculateSpanMeasurement(toothCount, pitchDiameter, ballDiameter);
-        }
+        // 5. 跨棒距分析将在切换到跨棒距tab时自动执行
 
         // 6. 计算齿距误差
         let singlePitchError = 0;
@@ -638,6 +634,10 @@ function setupTabs() {
                         drawRThetaPlot();
                     }, 300);
                 } else if (targetTab === 'span') {
+                    // 重置视图状态
+                    spanProfileViewState.zoom = 1.0;
+                    spanProfileViewState.offsetX = 0;
+                    spanProfileViewState.offsetY = 0;
                     updateSpanAnalysis();
                 }
             }
@@ -656,17 +656,22 @@ function setupEventListeners() {
     }
 
     // 输入框变化时自动计算
-    const inputFields = ['ballDiameter', 'pitchDiameterInput'];
-    inputFields.forEach(fieldId => {
-        const field = document.getElementById(fieldId);
-        if (field) {
-            field.addEventListener('input', debounce(() => {
-                if (analyzer.profilePoints.length > 0) {
-                    analyzeProfile();
-                }
-            }, 500));
-        }
-    });
+    const pitchDiameterInput = document.getElementById('pitchDiameterInput');
+    if (pitchDiameterInput) {
+        pitchDiameterInput.addEventListener('input', debounce(() => {
+            if (analyzer.profilePoints.length > 0) {
+                analyzeProfile();
+            }
+        }, 500));
+    }
+
+    // 量棒直径变化时更新跨棒距分析
+    const ballDiameterInput = document.getElementById('ballDiameter');
+    if (ballDiameterInput) {
+        ballDiameterInput.addEventListener('input', debounce(() => {
+            updateSpanAnalysis();
+        }, 300));
+    }
 
     // 视图控制按钮
     const zoomInBtn = document.getElementById('zoomInBtn');
@@ -1253,16 +1258,202 @@ function setupRThetaInteractions(canvas) {
 }
 
 /**
- * 更新跨棒距分析（包括圆形直方图和表格）
+ * 更新跨棒距分析
  */
 function updateSpanAnalysis() {
+    if (!analyzer.profilePoints || analyzer.profilePoints.length === 0) {
+        updateStatus('请先加载轮廓文件', 'error');
+        return;
+    }
+
     const toothCount = analyzer.toothCount || 0;
-    const pitchDiameter = parseFloat(document.getElementById('pitchDiameterInput').value) || 0;
     const ballDiameter = parseFloat(document.getElementById('ballDiameter').value) || 3;
 
-    if (toothCount > 0 && pitchDiameter > 0) {
-        calculateSpanMeasurement(toothCount, pitchDiameter, ballDiameter);
+    if (toothCount === 0) {
+        updateStatus('请先在基本参数tab中计算齿数', 'error');
+        return;
     }
+
+    if (!analyzer.addendumRadius || !analyzer.dedendumRadius) {
+        updateStatus('请先在基本参数tab中计算齿顶圆和齿根圆', 'error');
+        return;
+    }
+
+    try {
+        // 执行跨棒距分析
+        const spanAnalysis = performSpanAnalysis(
+            analyzer.profilePoints,
+            analyzer.toothCount,
+            analyzer.addendumRadius,
+            analyzer.dedendumRadius,
+            analyzer.circleCenterX,
+            analyzer.circleCenterY,
+            ballDiameter
+        );
+
+        if (spanAnalysis) {
+            // 更新结果显示
+            const avgDistance = spanAnalysis.distances.reduce((a, b) => a + b, 0) / spanAnalysis.distances.length;
+            const variance = spanAnalysis.distances.reduce((sum, d) => sum + Math.pow(d - avgDistance, 2), 0) / spanAnalysis.distances.length;
+            const stdDev = Math.sqrt(variance);
+
+            document.getElementById('spanMeasurement').textContent = avgDistance.toFixed(3);
+            document.getElementById('spanStdDev').textContent = stdDev.toFixed(3);
+
+            // 绘制可视化
+            drawSpanProfile(spanAnalysis);
+            drawSpanHistogram(spanAnalysis.distances);
+        }
+    } catch (error) {
+        console.error('跨棒距分析错误:', error);
+        updateStatus('跨棒距分析失败: ' + error.message, 'error');
+    }
+}
+
+/**
+ * 执行跨棒距分析
+ * @param {Array} profilePoints - 轮廓点
+ * @param {number} toothCount - 齿数
+ * @param {number} addendumRadius - 齿顶圆半径
+ * @param {number} dedendumRadius - 齿根圆半径
+ * @param {number} centerX - 圆心X
+ * @param {number} centerY - 圆心Y
+ * @param {number} ballDiameter - 量棒直径
+ * @returns {Object} 分析结果
+ */
+function performSpanAnalysis(profilePoints, toothCount, addendumRadius, dedendumRadius, centerX, centerY, ballDiameter) {
+    // 计算极坐标
+    const polarData = analyzer.calculatePolarCoordinates(profilePoints);
+    
+    // 筛选在齿根圆和齿顶圆之间的点
+    const filteredPolar = polarData.filter(p => {
+        return p.r >= dedendumRadius && p.r <= addendumRadius;
+    });
+    
+    if (filteredPolar.length === 0) {
+        console.warn('没有找到在齿根圆和齿顶圆之间的点');
+        return null;
+    }
+    
+    // 按角度排序
+    const sortedPolar = [...filteredPolar].sort((a, b) => a.theta - b.theta);
+    
+    // 将轮廓点按角度均匀分割，每个齿分割成多个段
+    // 目标：生成大约202个圆心（根据点的密度自动调整）
+    // 如果点数足够，尽量生成202个圆心；否则根据点数调整
+    const targetCircleCount = Math.min(202, Math.max(toothCount * 2, Math.floor(sortedPolar.length / 5)));
+    const segments = [];
+    const angleStep = (2 * Math.PI) / targetCircleCount;
+    
+    console.log(`目标生成 ${targetCircleCount} 个圆心，轮廓点数量: ${sortedPolar.length}`);
+    
+    // 找到起始角度（最小角度），然后归一化到[0, 2π)
+    let minTheta = Math.min(...sortedPolar.map(p => p.theta));
+    // 将起始角度对齐到最近的angleStep边界
+    const startOffset = minTheta % angleStep;
+    const normalizedStartAngle = minTheta - startOffset;
+    
+    // 将点分配到各个段
+    for (let i = 0; i < targetCircleCount; i++) {
+        const segmentStartAngle = normalizedStartAngle + i * angleStep;
+        let segmentEndAngle = normalizedStartAngle + (i + 1) * angleStep;
+        
+        // 处理跨越2π的情况
+        if (segmentEndAngle > 2 * Math.PI) {
+            segmentEndAngle = 2 * Math.PI;
+        }
+        
+        // 找到属于这个段的点
+        const segmentPoints = sortedPolar.filter(p => {
+            // 归一化角度到[0, 2π)
+            let theta = p.theta;
+            while (theta < 0) theta += 2 * Math.PI;
+            while (theta >= 2 * Math.PI) theta -= 2 * Math.PI;
+            
+            // 检查角度范围
+            let inAngleRange = false;
+            if (segmentEndAngle <= 2 * Math.PI) {
+                inAngleRange = theta >= segmentStartAngle && theta < segmentEndAngle;
+            } else {
+                // 跨越2π边界
+                const endAngle = segmentEndAngle - 2 * Math.PI;
+                inAngleRange = theta >= segmentStartAngle || theta < endAngle;
+            }
+            
+            return inAngleRange;
+        });
+        
+        if (segmentPoints.length > 0) {
+            segments.push({
+                angle: segmentStartAngle,
+                points: segmentPoints.map(p => ({
+                    x: centerX + p.r * Math.cos(p.theta),
+                    y: centerY + p.r * Math.sin(p.theta)
+                })),
+                polarPoints: segmentPoints
+            });
+        }
+    }
+    
+    console.log(`分割成 ${segments.length} 个段，目标 ${targetCircleCount} 个圆心`);
+    
+    // 对每一段拟合一个圆（直径为量棒直径）
+    // 圆心位置使用该段中半径最大的点（外接轮廓数据）
+    const ballCircles = [];
+    const ballRadius = ballDiameter / 2;
+    
+    segments.forEach(segment => {
+        if (segment.polarPoints.length > 0) {
+            // 找到该段中半径最大的点（外接轮廓点）
+            let maxRPoint = segment.polarPoints[0];
+            let maxR = maxRPoint.r;
+            
+            segment.polarPoints.forEach(p => {
+                if (p.r > maxR) {
+                    maxR = p.r;
+                    maxRPoint = p;
+                }
+            });
+            
+            // 将极坐标转换为直角坐标作为圆心
+            const ballCenterX = centerX + maxRPoint.r * Math.cos(maxRPoint.theta);
+            const ballCenterY = centerY + maxRPoint.r * Math.sin(maxRPoint.theta);
+            
+            ballCircles.push({
+                centerX: ballCenterX,
+                centerY: ballCenterY,
+                radius: ballRadius,
+                segmentAngle: segment.angle
+            });
+        }
+    });
+    
+    console.log(`生成了 ${ballCircles.length} 个量棒圆`);
+    
+    // 计算圆之间的距离（相邻圆之间的圆心距离）
+    const distances = [];
+    for (let i = 0; i < ballCircles.length; i++) {
+        const current = ballCircles[i];
+        const next = ballCircles[(i + 1) % ballCircles.length];
+        
+        const dx = next.centerX - current.centerX;
+        const dy = next.centerY - current.centerY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        distances.push(distance);
+    }
+    
+    console.log(`计算了 ${distances.length} 个跨棒距`);
+    
+    return {
+        ballCircles,
+        distances,
+        segments,
+        centerX,
+        centerY,
+        addendumRadius,
+        dedendumRadius
+    };
 }
 
 /**
@@ -1290,70 +1481,426 @@ function updateSpanTable(spanData) {
     });
 }
 
+// 跨棒距可视化器的状态
+let spanProfileViewState = {
+    zoom: 1.0,
+    offsetX: 0,
+    offsetY: 0,
+    isDragging: false,
+    lastMouseX: 0,
+    lastMouseY: 0,
+    dpr: window.devicePixelRatio || 1,
+    spanAnalysis: null
+};
+
 /**
- * 修改drawSpanPlot以支持圆形直方图和表格
+ * 绘制跨棒距分析的轮廓和量棒圆（支持缩放和拖拽）
  */
-const originalDrawSpanPlot = drawSpanPlot;
-drawSpanPlot = function(spanData) {
-    originalDrawSpanPlot(spanData);
-    updateSpanTable(spanData);
+function drawSpanProfile(spanAnalysis) {
+    const canvas = document.getElementById('spanProfileCanvas');
+    if (!canvas) return;
+
+    // 保存分析数据供交互使用
+    spanProfileViewState.spanAnalysis = spanAnalysis;
+
+    const container = canvas.parentElement;
+    const width = container.clientWidth || 600;
+    const height = container.clientHeight || 600;
     
-    // 重新绘制圆形直方图
-    const canvas = document.getElementById('spanPlotCanvas');
+    // 高DPI支持
+    const dpr = spanProfileViewState.dpr;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
+
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, width, height);
+
+    if (!spanAnalysis || !spanAnalysis.ballCircles || spanAnalysis.ballCircles.length === 0) {
+        ctx.fillStyle = '#999';
+        ctx.font = '16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('暂无数据', width / 2, height / 2);
+        return;
+    }
+
+    // 计算数据范围
+    const allPoints = analyzer.profilePoints;
+    const xs = allPoints.map(p => p.x);
+    const ys = allPoints.map(p => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+
+    const dataCenterX = (minX + maxX) / 2;
+    const dataCenterY = (minY + maxY) / 2;
+    const rangeX = maxX - minX;
+    const rangeY = maxY - minY;
+
+    // 计算初始缩放（如果还没有设置）
+    if (spanProfileViewState.zoom === 1.0 && spanProfileViewState.offsetX === 0 && spanProfileViewState.offsetY === 0) {
+        const padding = 40;
+        const scaleX = (width - padding * 2) / rangeX;
+        const scaleY = (height - padding * 2) / rangeY;
+        spanProfileViewState.zoom = Math.min(scaleX, scaleY) * 0.9;
+        spanProfileViewState.offsetX = 0;
+        spanProfileViewState.offsetY = 0;
+    }
+
+    const zoom = spanProfileViewState.zoom;
+    const offsetX = spanProfileViewState.offsetX;
+    const offsetY = spanProfileViewState.offsetY;
+
+    // 应用变换
+    ctx.save();
+    ctx.translate(width / 2 + offsetX, height / 2 + offsetY);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-dataCenterX, -dataCenterY);
+
+    // 绘制轮廓点
+    ctx.fillStyle = '#e74c3c';
+    ctx.strokeStyle = '#e74c3c';
+    ctx.lineWidth = 0.5 / zoom;
+    allPoints.forEach(point => {
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 0.5 / zoom, 0, 2 * Math.PI);
+        ctx.fill();
+    });
+
+    // 绘制齿根圆
+    if (spanAnalysis.dedendumRadius > 0) {
+        ctx.strokeStyle = '#ff6b6b';
+        ctx.lineWidth = 2 / zoom;
+        ctx.setLineDash([5 / zoom, 5 / zoom]);
+        ctx.beginPath();
+        ctx.arc(
+            spanAnalysis.centerX,
+            spanAnalysis.centerY,
+            spanAnalysis.dedendumRadius,
+            0,
+            2 * Math.PI
+        );
+        ctx.stroke();
+        ctx.setLineDash([]);
+    }
+
+    // 绘制齿顶圆
+    if (spanAnalysis.addendumRadius > 0) {
+        ctx.strokeStyle = '#96ceb4';
+        ctx.lineWidth = 2 / zoom;
+        ctx.setLineDash([5 / zoom, 5 / zoom]);
+        ctx.beginPath();
+        ctx.arc(
+            spanAnalysis.centerX,
+            spanAnalysis.centerY,
+            spanAnalysis.addendumRadius,
+            0,
+            2 * Math.PI
+        );
+        ctx.stroke();
+        ctx.setLineDash([]);
+    }
+
+    // 绘制量棒圆
+    ctx.strokeStyle = '#0066cc';
+    ctx.fillStyle = 'rgba(0, 102, 204, 0.15)';
+    ctx.lineWidth = 1.5 / zoom;
+    spanAnalysis.ballCircles.forEach(circle => {
+        ctx.beginPath();
+        ctx.arc(circle.centerX, circle.centerY, circle.radius, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.stroke();
+    });
+
+    // 绘制圆心连线（可选，用于显示距离）
+    ctx.strokeStyle = 'rgba(153, 153, 153, 0.5)';
+    ctx.lineWidth = 0.8 / zoom;
+    ctx.setLineDash([2 / zoom, 2 / zoom]);
+    for (let i = 0; i < spanAnalysis.ballCircles.length; i++) {
+        const current = spanAnalysis.ballCircles[i];
+        const next = spanAnalysis.ballCircles[(i + 1) % spanAnalysis.ballCircles.length];
+        
+        ctx.beginPath();
+        ctx.moveTo(current.centerX, current.centerY);
+        ctx.lineTo(next.centerX, next.centerY);
+        ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    ctx.restore();
+
+    // 绘制图例（在屏幕坐标系中）
+    ctx.fillStyle = '#333';
+    ctx.font = '12px Arial';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    
+    let legendY = 10;
+    ctx.fillStyle = '#e74c3c';
+    ctx.fillRect(10, legendY, 15, 15);
+    ctx.fillStyle = '#333';
+    ctx.fillText('轮廓点', 30, legendY + 2);
+    
+    legendY += 20;
+    ctx.strokeStyle = '#ff6b6b';
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(10, legendY + 7);
+    ctx.lineTo(25, legendY + 7);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillText('齿根圆', 30, legendY + 2);
+    
+    legendY += 20;
+    ctx.strokeStyle = '#96ceb4';
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(10, legendY + 7);
+    ctx.lineTo(25, legendY + 7);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillText('齿顶圆', 30, legendY + 2);
+    
+    legendY += 20;
+    ctx.strokeStyle = '#0066cc';
+    ctx.fillStyle = 'rgba(0, 102, 204, 0.15)';
+    ctx.beginPath();
+    ctx.arc(17, legendY + 7, 7, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#333';
+    ctx.fillText('量棒圆', 30, legendY + 2);
+
+    // 设置交互事件（如果还没有设置）
+    setupSpanProfileInteractions(canvas);
+}
+
+/**
+ * 设置跨棒距轮廓canvas的交互功能（缩放和拖拽）
+ */
+function setupSpanProfileInteractions(canvas) {
+    // 避免重复绑定事件
+    if (canvas._spanProfileInteractionsSetup) return;
+    canvas._spanProfileInteractionsSetup = true;
+    
+    // 鼠标按下 - 开始拖拽
+    canvas.addEventListener('mousedown', (e) => {
+        spanProfileViewState.isDragging = true;
+        spanProfileViewState.lastMouseX = e.clientX;
+        spanProfileViewState.lastMouseY = e.clientY;
+        canvas.style.cursor = 'grabbing';
+    });
+    
+    // 鼠标移动 - 拖拽
+    canvas.addEventListener('mousemove', (e) => {
+        if (spanProfileViewState.isDragging) {
+            const dx = e.clientX - spanProfileViewState.lastMouseX;
+            const dy = e.clientY - spanProfileViewState.lastMouseY;
+            spanProfileViewState.offsetX += dx;
+            spanProfileViewState.offsetY += dy;
+            spanProfileViewState.lastMouseX = e.clientX;
+            spanProfileViewState.lastMouseY = e.clientY;
+            drawSpanProfile(spanProfileViewState.spanAnalysis);
+        }
+    });
+    
+    // 鼠标释放 - 结束拖拽
+    canvas.addEventListener('mouseup', () => {
+        spanProfileViewState.isDragging = false;
+        canvas.style.cursor = 'grab';
+    });
+    
+    // 鼠标离开 - 结束拖拽
+    canvas.addEventListener('mouseleave', () => {
+        spanProfileViewState.isDragging = false;
+        canvas.style.cursor = 'default';
+    });
+    
+    // 滚轮缩放
+    canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+        const oldZoom = spanProfileViewState.zoom;
+        spanProfileViewState.zoom = Math.max(0.1, Math.min(100, spanProfileViewState.zoom * zoomFactor));
+        
+        // 调整偏移，使鼠标位置保持不变
+        const zoomChange = spanProfileViewState.zoom / oldZoom;
+        const width = canvas.width / spanProfileViewState.dpr;
+        const height = canvas.height / spanProfileViewState.dpr;
+        const centerX = width / 2;
+        const centerY = height / 2;
+        
+        spanProfileViewState.offsetX = centerX + (spanProfileViewState.offsetX - centerX + mouseX - centerX) * zoomChange - (mouseX - centerX);
+        spanProfileViewState.offsetY = centerY + (spanProfileViewState.offsetY - centerY + mouseY - centerY) * zoomChange - (mouseY - centerY);
+        
+        drawSpanProfile(spanProfileViewState.spanAnalysis);
+    });
+    
+    // 设置鼠标样式
+    canvas.style.cursor = 'grab';
+}
+
+/**
+ * 绘制跨棒距距离直方图（每个跨棒距值一个bar）
+ */
+function drawSpanHistogram(distances) {
+    const canvas = document.getElementById('spanHistogramCanvas');
     if (!canvas) return;
 
     const container = canvas.parentElement;
-    const size = Math.min(container.clientWidth - 40, container.clientHeight - 40, 500);
-    canvas.width = size;
-    canvas.height = size;
+    const width = container.clientWidth || 600;
+    const height = container.clientHeight || 300;
+    
+    // 高DPI支持
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
 
     const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, size, size);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, width, height);
 
-    const centerX = size / 2;
-    const centerY = size / 2;
-    const radius = size * 0.35;
-    const toothCount = analyzer.toothCount || 20;
-    const angleStep = (2 * Math.PI) / toothCount;
-
-    // 绘制圆形背景
-    ctx.strokeStyle = '#e0e0e0';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
-    ctx.stroke();
-
-    if (spanData && spanData.spanMeasurements) {
-        const measurements = spanData.spanMeasurements;
-        const min = Math.min(...measurements);
-        const max = Math.max(...measurements);
-        const range = max - min || 1;
-
-        // 绘制跨棒距bar
-        ctx.fillStyle = '#0066cc';
-        ctx.strokeStyle = '#0066cc';
-        ctx.lineWidth = 2;
-
-        measurements.forEach((measurement, i) => {
-            const angle = i * angleStep - Math.PI / 2;
-            const barLength = ((measurement - min) / range) * radius * 0.4;
-            const x1 = centerX + radius * Math.cos(angle);
-            const y1 = centerY + radius * Math.sin(angle);
-            const x2 = centerX + (radius + barLength) * Math.cos(angle);
-            const y2 = centerY + (radius + barLength) * Math.sin(angle);
-
-            ctx.beginPath();
-            ctx.moveTo(x1, y1);
-            ctx.lineTo(x2, y2);
-            ctx.stroke();
-        });
+    if (!distances || distances.length === 0) {
+        ctx.fillStyle = '#999';
+        ctx.font = '16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('暂无数据', width / 2, height / 2);
+        return;
     }
 
-    // 标注
+    // 计算数据范围
+    const min = Math.min(...distances);
+    const max = Math.max(...distances);
+    const range = max - min || 1;
+    const avg = distances.reduce((a, b) => a + b, 0) / distances.length;
+
+    // 设置边距
+    const padding = { top: 30, right: 20, bottom: 50, left: 60 };
+    const plotWidth = width - padding.left - padding.right;
+    const plotHeight = height - padding.top - padding.bottom;
+
+    // 每个跨棒距值一个bar
+    const barCount = distances.length;
+    const barWidth = Math.max(1, plotWidth / barCount - 1); // 至少1像素宽，bar之间有1像素间隔
+
+    // 绘制背景
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(padding.left, padding.top, plotWidth, plotHeight);
+
+    // 绘制网格
+    ctx.strokeStyle = '#e0e0e0';
+    ctx.lineWidth = 1;
+    // 水平网格线
+    for (let i = 0; i <= 5; i++) {
+        const y = padding.top + (plotHeight * i / 5);
+        ctx.beginPath();
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(padding.left + plotWidth, y);
+        ctx.stroke();
+    }
+    // 垂直网格线（可选，如果bar数量不太多）
+    if (barCount <= 50) {
+        for (let i = 0; i <= barCount; i++) {
+            const x = padding.left + (plotWidth * i / barCount);
+            ctx.beginPath();
+            ctx.moveTo(x, padding.top);
+            ctx.lineTo(x, padding.top + plotHeight);
+            ctx.stroke();
+        }
+    }
+
+    // 绘制每个跨棒距值的bar（高度固定为1，因为每个值只出现一次）
+    ctx.fillStyle = '#0066cc';
+    distances.forEach((distance, i) => {
+        const x = padding.left + (plotWidth * i / barCount);
+        const barHeight = plotHeight * 0.8; // 固定高度，占80%的plotHeight
+        const y = padding.top + plotHeight - barHeight;
+        
+        ctx.fillRect(x, y, barWidth, barHeight);
+    });
+
+    // 绘制平均值线
+    const avgX = padding.left + ((avg - min) / range) * plotWidth;
+    ctx.strokeStyle = '#ff9900';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(avgX, padding.top);
+    ctx.lineTo(avgX, padding.top + plotHeight);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 绘制坐标轴
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(padding.left, padding.top);
+    ctx.lineTo(padding.left, padding.top + plotHeight);
+    ctx.lineTo(padding.left + plotWidth, padding.top + plotHeight);
+    ctx.stroke();
+
+    // 绘制标签
     ctx.fillStyle = '#333';
-    ctx.font = '14px Arial';
+    ctx.font = '12px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText('跨棒距分布', centerX, centerY - radius - 30);
+    ctx.fillText('跨棒距序号', width / 2, height - 10);
+    
+    ctx.save();
+    ctx.translate(20, height / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center';
+    ctx.fillText('跨棒距值 (mm)', 0, 0);
+    ctx.restore();
+
+    // 绘制X轴刻度（显示序号）
+    ctx.font = '9px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    const xTickCount = Math.min(10, barCount); // 最多显示10个刻度
+    for (let i = 0; i <= xTickCount; i++) {
+        const index = Math.floor((barCount * i) / xTickCount);
+        if (index < barCount) {
+            const x = padding.left + (plotWidth * index / barCount);
+            ctx.fillText(index.toString(), x, padding.top + plotHeight + 5);
+        }
+    }
+
+    // 绘制Y轴刻度（显示跨棒距值）
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (let i = 0; i <= 5; i++) {
+        const value = min + (range * (1 - i / 5));
+        const y = padding.top + (plotHeight * i / 5);
+        ctx.fillText(value.toFixed(3), padding.left - 10, y);
+    }
+
+    // 标注统计信息
+    const variance = distances.reduce((sum, d) => sum + Math.pow(d - avg, 2), 0) / distances.length;
+    const stdDev = Math.sqrt(variance);
+    
+    ctx.fillStyle = '#333';
+    ctx.font = '11px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText(`数量: ${barCount}`, padding.left + plotWidth + 10, padding.top);
+    ctx.fillText(`平均值: ${avg.toFixed(3)} mm`, padding.left + plotWidth + 10, padding.top + 15);
+    ctx.fillText(`标准差: ${stdDev.toFixed(3)} mm`, padding.left + plotWidth + 10, padding.top + 30);
+    ctx.fillText(`最小值: ${min.toFixed(3)} mm`, padding.left + plotWidth + 10, padding.top + 45);
+    ctx.fillText(`最大值: ${max.toFixed(3)} mm`, padding.left + plotWidth + 10, padding.top + 60);
+    
+    // 标注平均值线
+    ctx.fillStyle = '#ff9900';
+    ctx.fillText('平均值', avgX + 5, padding.top + 5);
 };
 
 /**

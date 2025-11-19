@@ -129,31 +129,24 @@
                         </div>
                         <div class="result-table">
                             <div class="result-row highlight">
-                                <span class="result-label">跨棒距 (M)</span>
+                                <span class="result-label">平均跨棒距</span>
                                 <span class="result-value" id="spanMeasurement">-</span>
                                 <span class="result-unit">mm</span>
                             </div>
                             <div class="result-row">
-                                <span class="result-label">跨齿数</span>
-                                <span class="result-value" id="spanTeeth">-</span>
-                                <span class="result-unit">齿</span>
+                                <span class="result-label">跨棒距标准差</span>
+                                <span class="result-value" id="spanStdDev">-</span>
+                                <span class="result-unit">mm</span>
                             </div>
                         </div>
-                        <div class="span-table-container">
-                            <table class="data-table" id="spanTable">
-                                <thead>
-                                    <tr>
-                                        <th>角度 (°)</th>
-                                        <th>跨棒距 (mm)</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                </tbody>
-                            </table>
-                        </div>
                     </div>
-                    <div class="span-plot">
-                        <canvas id="spanPlotCanvas"></canvas>
+                    <div class="span-visualization">
+                        <h4>轮廓与量棒圆</h4>
+                        <canvas id="spanProfileCanvas"></canvas>
+                    </div>
+                    <div class="span-histogram">
+                        <h4>跨棒距直方图</h4>
+                        <canvas id="spanHistogramCanvas"></canvas>
                     </div>
                 </div>
             </div>
