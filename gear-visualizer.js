@@ -94,6 +94,52 @@ class GearVisualizer {
         this.updateZoomDisplay();
     }
 
+    fitToView() {
+        // 如果没有轮廓点，使用默认视图
+        if (!this.profilePoints || this.profilePoints.length === 0) {
+            this.resetView();
+            return;
+        }
+
+        // 计算数据范围
+        const xs = this.profilePoints.map(p => p.x);
+        const ys = this.profilePoints.map(p => p.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+        const rangeX = maxX - minX;
+        const rangeY = maxY - minY;
+        const maxRange = Math.max(rangeX, rangeY);
+
+        // 计算画布可用区域（留出边距）
+        const padding = 40; // 边距（像素）
+        const availableWidth = this.canvas.width - padding * 2;
+        const availableHeight = this.canvas.height - padding * 2;
+
+        // 计算合适的缩放比例
+        const scaleX = availableWidth / rangeX;
+        const scaleY = availableHeight / rangeY;
+        const newZoom = Math.min(scaleX, scaleY) * 0.9; // 0.9 是为了留出一些边距
+
+        // 限制缩放范围
+        this.zoom = Math.max(0.1, Math.min(10, newZoom));
+
+        // 重置偏移，让轮廓居中显示
+        this.offsetX = 0;
+        this.offsetY = 0;
+
+        // 保存中心点供绘制时使用
+        this.profileCenterX = centerX;
+        this.profileCenterY = centerY;
+
+        this.draw();
+        this.updateZoomDisplay();
+    }
+
     updateZoomDisplay() {
         const zoomDisplay = document.getElementById('zoomLevel');
         if (zoomDisplay) {
@@ -132,15 +178,20 @@ class GearVisualizer {
         ctx.translate(width / 2 + this.offsetX, height / 2 + this.offsetY);
         ctx.scale(this.zoom, this.zoom);
 
-        // 绘制网格
-        this.drawGrid(ctx, width, height);
+        // 绘制网格（如果有轮廓点，不绘制默认网格，由drawAxesWithScale绘制）
+        if (!this.profilePoints || this.profilePoints.length === 0) {
+            this.drawGrid(ctx, width, height);
+        } else {
+            // 只绘制背景网格，不绘制坐标轴（坐标轴由drawAxesWithScale绘制）
+            this.drawBackgroundGrid(ctx, width, height);
+        }
 
         // 如果有齿轮数据，绘制齿轮
         if (this.gearData) {
             this.drawGearGeometry(ctx, this.gearData);
         }
 
-        // 如果有轮廓点，绘制轮廓
+        // 如果有轮廓点，绘制轮廓（包含坐标轴刻度）
         if (this.profilePoints && this.profilePoints.length > 0) {
             this.drawProfilePoints(ctx, this.profilePoints);
         }
@@ -183,6 +234,33 @@ class GearVisualizer {
         ctx.moveTo(0, startY);
         ctx.lineTo(0, endY);
         ctx.stroke();
+    }
+
+    drawBackgroundGrid(ctx, width, height) {
+        ctx.strokeStyle = '#e0e0e0';
+        ctx.lineWidth = 0.5 / this.zoom;
+
+        const gridSize = 20;
+        const startX = -width / 2;
+        const startY = -height / 2;
+        const endX = width / 2;
+        const endY = height / 2;
+
+        // 垂直线
+        for (let x = Math.floor(startX / gridSize) * gridSize; x <= endX; x += gridSize) {
+            ctx.beginPath();
+            ctx.moveTo(x, startY);
+            ctx.lineTo(x, endY);
+            ctx.stroke();
+        }
+
+        // 水平线
+        for (let y = Math.floor(startY / gridSize) * gridSize; y <= endY; y += gridSize) {
+            ctx.beginPath();
+            ctx.moveTo(startX, y);
+            ctx.lineTo(endX, y);
+            ctx.stroke();
+        }
     }
 
     drawGearGeometry(ctx, gearData) {
@@ -327,6 +405,13 @@ class GearVisualizer {
         const centerX = (Math.min(...xs) + Math.max(...xs)) / 2;
         const centerY = (Math.min(...ys) + Math.max(...ys)) / 2;
 
+        // 保存中心点供其他方法使用
+        this.profileCenterX = centerX;
+        this.profileCenterY = centerY;
+
+        // 绘制坐标轴刻度
+        this.drawAxesWithScale(ctx, profilePoints, centerX, centerY);
+
         // 绘制轮廓线
         ctx.strokeStyle = '#e74c3c';
         ctx.lineWidth = 2 / this.zoom;
@@ -353,6 +438,105 @@ class GearVisualizer {
             ctx.arc(x, y, 2 / this.zoom, 0, 2 * Math.PI);
             ctx.fill();
         });
+    }
+
+    drawAxesWithScale(ctx, profilePoints, centerX, centerY) {
+        if (!profilePoints || profilePoints.length === 0) return;
+
+        // 计算数据范围
+        const xs = profilePoints.map(p => p.x - centerX);
+        const ys = profilePoints.map(p => p.y - centerY);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        
+        const rangeX = maxX - minX;
+        const rangeY = maxY - minY;
+        const maxRange = Math.max(rangeX, rangeY);
+
+        // 计算合适的刻度间隔（根据数据范围自动调整）
+        let scaleInterval = 1;
+        if (maxRange > 100) {
+            scaleInterval = 10;
+        } else if (maxRange > 50) {
+            scaleInterval = 5;
+        } else if (maxRange > 20) {
+            scaleInterval = 2;
+        } else if (maxRange > 10) {
+            scaleInterval = 1;
+        } else if (maxRange > 5) {
+            scaleInterval = 0.5;
+        } else {
+            scaleInterval = 0.1;
+        }
+
+        // 计算画布范围（用于绘制坐标轴）
+        const canvasWidth = this.canvas.width / this.zoom;
+        const canvasHeight = this.canvas.height / this.zoom;
+        const axisLength = Math.max(canvasWidth, canvasHeight) * 0.6;
+
+        // 绘制坐标轴
+        ctx.strokeStyle = '#666';
+        ctx.lineWidth = 1.5 / this.zoom;
+        ctx.beginPath();
+        // X轴
+        ctx.moveTo(-axisLength, 0);
+        ctx.lineTo(axisLength, 0);
+        // Y轴
+        ctx.moveTo(0, -axisLength);
+        ctx.lineTo(0, axisLength);
+        ctx.stroke();
+
+        // 绘制X轴刻度
+        ctx.strokeStyle = '#666';
+        ctx.lineWidth = 1 / this.zoom;
+        ctx.fillStyle = '#333';
+        ctx.font = `${10 / this.zoom}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+
+        // X轴刻度线
+        const startX = Math.floor(minX / scaleInterval) * scaleInterval;
+        const endX = Math.ceil(maxX / scaleInterval) * scaleInterval;
+        for (let x = startX; x <= endX; x += scaleInterval) {
+            const yPos = 0;
+            const tickLength = 5 / this.zoom;
+            
+            ctx.beginPath();
+            ctx.moveTo(x, yPos - tickLength);
+            ctx.lineTo(x, yPos + tickLength);
+            ctx.stroke();
+
+            // 刻度标签（显示所有刻度，包括0）
+            const label = x.toFixed(scaleInterval < 1 ? 1 : 0);
+            ctx.fillText(label, x, yPos + tickLength + 2 / this.zoom);
+        }
+
+        // Y轴刻度线
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        const startY = Math.floor(minY / scaleInterval) * scaleInterval;
+        const endY = Math.ceil(maxY / scaleInterval) * scaleInterval;
+        for (let y = startY; y <= endY; y += scaleInterval) {
+            const xPos = 0;
+            const tickLength = 5 / this.zoom;
+            
+            ctx.beginPath();
+            ctx.moveTo(xPos - tickLength, y);
+            ctx.lineTo(xPos + tickLength, y);
+            ctx.stroke();
+
+            // 刻度标签（显示所有刻度，包括0）
+            const label = y.toFixed(scaleInterval < 1 ? 1 : 0);
+            ctx.fillText(label, xPos - tickLength - 2 / this.zoom, y);
+        }
+
+        // 绘制原点标记
+        ctx.fillStyle = '#333';
+        ctx.beginPath();
+        ctx.arc(0, 0, 3 / this.zoom, 0, 2 * Math.PI);
+        ctx.fill();
     }
 }
 

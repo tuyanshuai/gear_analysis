@@ -53,6 +53,9 @@ function setupFileUploads() {
                     // 绘制轮廓
                     visualizer.drawProfile(points);
                     
+                    // 自动适应视图
+                    setTimeout(() => visualizer.fitToView(), 100);
+                    
                     // 自动分析
                     analyzeProfile();
                     updateStatus('文件加载成功', 'success');
@@ -553,6 +556,11 @@ function setupEventListeners() {
     const resetViewBtn = document.getElementById('resetViewBtn');
     if (resetViewBtn) {
         resetViewBtn.addEventListener('click', () => visualizer.resetView());
+    }
+
+    const fitToViewBtn = document.getElementById('fitToViewBtn');
+    if (fitToViewBtn) {
+        fitToViewBtn.addEventListener('click', () => visualizer.fitToView());
     }
 }
 
