@@ -9,7 +9,25 @@ let visualizer;
 let basicParamsVisualizer; // 基本参数tab的可视化器
 let analyzer;
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    // 检查所有必需的类是否已加载
+    console.log('========== 检查依赖类 ==========');
+    console.log('GearCalculator:', typeof GearCalculator);
+    console.log('GearVisualizer:', typeof GearVisualizer);
+    console.log('GearFileParser:', typeof GearFileParser);
+    console.log('GearPointUtils:', typeof GearPointUtils);
+    console.log('GearToothCount:', typeof GearToothCount);
+    console.log('GearCircleFitting:', typeof GearCircleFitting);
+    console.log('GearRegistration:', typeof GearRegistration);
+    console.log('GearGrade:', typeof GearGrade);
+    console.log('GearAnalysis:', typeof GearAnalysis);
+    
+    if (typeof GearToothCount === 'undefined') {
+        console.error('错误：GearToothCount 未定义！请检查 gear-tooth-count.js 是否已正确加载');
+        alert('错误：GearToothCount 类未加载。请检查浏览器控制台。');
+        return;
+    }
+    
     // 初始化计算器和可视化器
     calculator = new GearCalculator();
     visualizer = new GearVisualizer('gearCanvas');
@@ -18,16 +36,98 @@ document.addEventListener('DOMContentLoaded', () => {
     basicParamsVisualizer.onAfterDraw = () => {
         drawFittedCircles();
     };
-    analyzer = new GearAnalysis();
+    
+    try {
+        analyzer = new GearAnalysis();
+        console.log('analyzer 初始化成功');
+    } catch (error) {
+        console.error('analyzer 初始化失败:', error);
+        alert('初始化失败: ' + error.message);
+        return;
+    }
 
     // 绑定事件监听器
     setupEventListeners();
     setupTabs();
     setupFileUploads();
 
-    // 初始状态
-    updateStatus('就绪', 'success');
+    // 自动加载默认文件（延迟一点确保DOM完全加载）
+    setTimeout(async () => {
+        await loadDefaultFile();
+    }, 100);
 });
+
+/**
+ * 自动加载默认文件
+ */
+async function loadDefaultFile() {
+    try {
+        console.log('开始加载默认文件: 25-100刚轮-点.csv');
+        updateStatus('正在加载默认文件...', 'warning');
+        
+        // 尝试多个可能的路径
+        const possiblePaths = [
+            '25-100刚轮-点.csv',
+            './25-100刚轮-点.csv',
+            'gear_analysis/25-100刚轮-点.csv'
+        ];
+        
+        let content = null;
+        let filePath = null;
+        
+        for (const path of possiblePaths) {
+            try {
+                console.log(`尝试路径: ${path}`);
+                const response = await fetch(path);
+                if (response.ok) {
+                    content = await response.text();
+                    filePath = path;
+                    console.log(`成功从 ${path} 加载文件`);
+                    break;
+                }
+            } catch (e) {
+                console.log(`路径 ${path} 失败:`, e);
+                continue;
+            }
+        }
+        
+        if (!content) {
+            console.warn('无法从任何路径加载默认文件，请手动上传文件');
+            updateStatus('默认文件未找到，请手动上传', 'warning');
+            return;
+        }
+        
+        console.log('文件内容长度:', content.length);
+        const points = analyzer.parseProfileFile(content, '25-100刚轮-点.csv');
+        console.log('解析得到点数:', points.length);
+        
+        if (points.length > 0) {
+            analyzer.profilePoints = points;
+            const fileNameEl = document.getElementById('fileName');
+            const fileInfoEl = document.getElementById('fileInfo');
+            
+            if (fileNameEl) fileNameEl.textContent = '25-100刚轮-点.csv';
+            if (fileInfoEl) fileInfoEl.textContent = `已加载 ${points.length} 个点`;
+            
+            // 绘制轮廓
+            visualizer.drawProfile(points);
+            
+            // 自动适应视图
+            setTimeout(() => visualizer.fitToView(), 100);
+            
+            // 自动分析
+            analyzeProfile();
+            updateStatus('默认文件加载成功', 'success');
+            console.log('默认文件加载和分析完成');
+        } else {
+            console.warn('文件解析后没有点数据');
+            updateStatus('文件格式错误', 'error');
+        }
+    } catch (error) {
+        console.error('加载默认文件失败:', error);
+        updateStatus('加载默认文件失败: ' + error.message, 'error');
+    }
+}
 
 /**
  * 设置文件上传
@@ -146,6 +246,10 @@ function analyzeProfile() {
         const toothCount = analyzer.calculateToothCountFromProfile(polarData);
         analyzer.toothCount = toothCount;
         document.getElementById('toothCountResult').textContent = toothCount.toFixed(0);
+        
+        // 确保分析数据已保存（用于r(θ)图显示）
+        console.log('齿数计算结果:', toothCount);
+        console.log('分析数据:', analyzer.toothCountAnalysis);
 
         // 3. 拟合齿顶圆和齿根圆
         const circles = analyzer.fitAddendumAndDedendumCircles(analyzer.profilePoints, toothCount);
@@ -167,7 +271,12 @@ function analyzeProfile() {
         drawBasicParamsCircles();
         
         // 绘制r(theta)分析图（延迟确保数据已保存）
-        setTimeout(() => drawRThetaPlot(), 100);
+        setTimeout(() => {
+            console.log('========== analyzeProfile 完成，准备绘制r(θ)图 ==========');
+            console.log('analyzer.profilePoints:', analyzer.profilePoints ? `${analyzer.profilePoints.length} 个点` : 'null');
+            console.log('analyzer.toothCountAnalysis:', analyzer.toothCountAnalysis);
+            drawRThetaPlot();
+        }, 300);
 
         // 5. 计算跨棒距
         const ballDiameter = parseFloat(document.getElementById('ballDiameter').value) || 3;
@@ -506,7 +615,16 @@ function setupTabs() {
                 if (targetTab === 'basic') {
                     drawBasicParamsCircles();
                     // 延迟绘制r(theta)图，确保canvas已初始化
-                    setTimeout(() => drawRThetaPlot(), 200);
+                    setTimeout(() => {
+                        console.log('========== Tab切换到basic，准备绘制r(θ)图 ==========');
+                        // 如果还没有分析数据，但有轮廓点，重新计算
+                        if (!analyzer.toothCountAnalysis && analyzer.profilePoints && analyzer.profilePoints.length > 0) {
+                            console.log('Tab切换：重新计算分析数据');
+                            const polarData = analyzer.calculatePolarCoordinates(analyzer.profilePoints);
+                            analyzer.calculateToothCountFromProfile(polarData);
+                        }
+                        drawRThetaPlot();
+                    }, 300);
                 } else if (targetTab === 'span') {
                     updateSpanAnalysis();
                 }
@@ -777,69 +895,82 @@ function drawFittedCircles() {
 }
 
 /**
- * 绘制r(theta)分析图，显示计算齿数的中间过程
+ * 绘制r(theta)分析图，显示排序后的r(theta)数据
  */
 function drawRThetaPlot() {
+    console.log('========== drawRThetaPlot 开始 ==========');
     const canvas = document.getElementById('rThetaCanvas');
+    console.log('canvas元素:', canvas);
+    
     if (!canvas) {
-        console.warn('rThetaCanvas not found');
+        console.error('rThetaCanvas not found! 检查HTML中是否有id="rThetaCanvas"的元素');
         return;
     }
     
-    if (!analyzer.toothCountAnalysis) {
-        // 如果没有分析数据，清空canvas并显示提示
+    console.log('analyzer对象:', analyzer);
+    console.log('analyzer.profilePoints:', analyzer.profilePoints ? `${analyzer.profilePoints.length} 个点` : 'null');
+    console.log('analyzer.toothCountAnalysis:', analyzer.toothCountAnalysis);
+    
+    // 直接使用轮廓点计算极坐标（不依赖toothCountAnalysis）
+    let polarData = null;
+    if (analyzer.profilePoints && analyzer.profilePoints.length > 0) {
+        console.log('从profilePoints计算极坐标...');
+        polarData = analyzer.calculatePolarCoordinates(analyzer.profilePoints);
+        console.log('计算得到极坐标数据:', polarData ? `${polarData.length} 个点` : 'null');
+    } else if (analyzer.toothCountAnalysis && analyzer.toothCountAnalysis.polarData) {
+        console.log('从toothCountAnalysis获取极坐标数据...');
+        polarData = analyzer.toothCountAnalysis.polarData;
+        console.log('获取到极坐标数据:', polarData ? `${polarData.length} 个点` : 'null');
+    } else {
+        console.warn('没有可用的数据源！');
+    }
+    
+    if (!polarData || polarData.length === 0) {
+        console.error('polarData为空或长度为0！');
         const ctx = canvas.getContext('2d');
-        const width = canvas.width || 800;
-        const height = canvas.height || 400;
+        const width = 800;
+        const height = 300;
+        canvas.width = width;
+        canvas.height = height;
         ctx.clearRect(0, 0, width, height);
         ctx.fillStyle = '#999';
         ctx.font = '14px Arial';
         ctx.textAlign = 'center';
         ctx.fillText('暂无数据，请先加载轮廓文件', width / 2, height / 2);
+        console.log('已绘制"暂无数据"提示');
         return;
     }
-
-    const analysis = analyzer.toothCountAnalysis;
-    const polarData = analysis.polarData;
     
-    if (!polarData || polarData.length === 0) {
-        const ctx = canvas.getContext('2d');
-        const width = canvas.width || 800;
-        const height = canvas.height || 400;
-        ctx.clearRect(0, 0, width, height);
-        ctx.fillStyle = '#999';
-        ctx.font = '14px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('暂无数据', width / 2, height / 2);
-        return;
-    }
+    console.log('polarData有效，开始绘制图表...');
 
     // 设置canvas尺寸
     const container = canvas.parentElement;
-    if (!container) {
-        console.warn('rThetaCanvas parent container not found');
-        return;
-    }
+    console.log('container元素:', container);
+    console.log('container.clientWidth:', container ? container.clientWidth : 'null');
     
-    // 获取容器宽度，如果为0则使用默认值
-    let containerWidth = container.clientWidth;
-    if (containerWidth === 0) {
-        // 如果容器宽度为0，尝试从父元素获取
-        const parent = container.parentElement;
-        if (parent) {
-            containerWidth = parent.clientWidth || 800;
-        } else {
-            containerWidth = 800;
+    let width = 800;
+    let height = 300;
+    
+    if (container) {
+        const containerWidth = container.clientWidth;
+        console.log('容器宽度:', containerWidth);
+        if (containerWidth > 0) {
+            width = Math.max(containerWidth - 40, 600);
         }
     }
     
-    const width = Math.max(containerWidth - 40, 600);
-    const height = 400;
+    console.log('设置canvas尺寸:', width, 'x', height);
     canvas.width = width;
     canvas.height = height;
 
     const ctx = canvas.getContext('2d');
+    if (!ctx) {
+        console.error('无法获取canvas 2d上下文！');
+        return;
+    }
+    
     ctx.clearRect(0, 0, width, height);
+    console.log('canvas已清空');
 
     // 计算数据范围
     const thetas = polarData.map(p => p.theta);
@@ -849,9 +980,13 @@ function drawRThetaPlot() {
     const minR = Math.min(...rValues);
     const maxR = Math.max(...rValues);
     const rRange = maxR - minR || 1;
+    
+    console.log('数据范围:');
+    console.log('  theta: [', minTheta.toFixed(4), ',', maxTheta.toFixed(4), ']');
+    console.log('  r: [', minR.toFixed(4), ',', maxR.toFixed(4), '], range:', rRange.toFixed(4));
 
-    // 设置边距
-    const padding = { top: 40, right: 20, bottom: 60, left: 60 };
+    // 设置边距（调整以适应较低的高度）
+    const padding = { top: 30, right: 20, bottom: 50, left: 60 };
     const plotWidth = width - padding.left - padding.right;
     const plotHeight = height - padding.top - padding.bottom;
 
@@ -893,10 +1028,12 @@ function drawRThetaPlot() {
         ctx.stroke();
     }
 
-    // 绘制r(theta)曲线
+    // 绘制r(theta)曲线（排序后的数据）
+    console.log('开始绘制r(theta)曲线，点数:', polarData.length);
     ctx.strokeStyle = '#0066cc';
     ctx.lineWidth = 2;
     ctx.beginPath();
+    let pointsDrawn = 0;
     for (let i = 0; i < polarData.length; i++) {
         const x = padding.left + ((thetas[i] - minTheta) / (maxTheta - minTheta || 1)) * plotWidth;
         const y = padding.top + plotHeight - ((rValues[i] - minR) / rRange) * plotHeight;
@@ -905,87 +1042,50 @@ function drawRThetaPlot() {
         } else {
             ctx.lineTo(x, y);
         }
+        pointsDrawn++;
     }
     ctx.stroke();
+    console.log('已绘制', pointsDrawn, '个点');
 
-    // 绘制平滑后的r值（如果存在）
-    if (analysis.smoothedR && analysis.smoothedR.length > 0) {
-        ctx.strokeStyle = '#00aa00';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([5, 5]);
-        ctx.beginPath();
-        for (let i = 0; i < analysis.smoothedR.length && i < polarData.length; i++) {
-            const x = padding.left + ((thetas[i] - minTheta) / (maxTheta - minTheta || 1)) * plotWidth;
-            const y = padding.top + plotHeight - ((analysis.smoothedR[i] - minR) / rRange) * plotHeight;
-            if (i === 0) {
-                ctx.moveTo(x, y);
-            } else {
-                ctx.lineTo(x, y);
+    // 如果有分析数据，显示额外的信息
+    const analysis = analyzer.toothCountAnalysis;
+    if (analysis) {
+        // 绘制平滑后的r值（如果存在）
+        if (analysis.smoothedR && analysis.smoothedR.length > 0) {
+            ctx.strokeStyle = '#00aa00';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            for (let i = 0; i < analysis.smoothedR.length && i < polarData.length; i++) {
+                const x = padding.left + ((thetas[i] - minTheta) / (maxTheta - minTheta || 1)) * plotWidth;
+                const y = padding.top + plotHeight - ((analysis.smoothedR[i] - minR) / rRange) * plotHeight;
+                if (i === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
             }
+            ctx.stroke();
+            ctx.setLineDash([]);
         }
-        ctx.stroke();
-        ctx.setLineDash([]);
-    }
 
-    // 绘制峰值点（齿顶）
-    if (analysis.peaks && analysis.peaks.length > 0) {
-        ctx.fillStyle = '#ff0000';
-        ctx.strokeStyle = '#ff0000';
-        analysis.peaks.forEach(peakIdx => {
-            if (peakIdx < polarData.length) {
-                const x = padding.left + ((thetas[peakIdx] - minTheta) / (maxTheta - minTheta || 1)) * plotWidth;
-                const y = padding.top + plotHeight - ((rValues[peakIdx] - minR) / rRange) * plotHeight;
-                ctx.beginPath();
-                ctx.arc(x, y, 4, 0, 2 * Math.PI);
-                ctx.fill();
-            }
-        });
-    }
-
-    // 绘制角度差（在下方子图）
-    if (analysis.angleDiffs && analysis.angleDiffs.length > 0) {
-        const subPlotHeight = 80;
-        const subPlotY = height - subPlotHeight;
-        
-        // 绘制角度差背景
-        ctx.fillStyle = '#f0f0f0';
-        ctx.fillRect(padding.left, subPlotY, plotWidth, subPlotHeight - padding.bottom);
-
-        // 计算角度差的范围
-        const maxDiff = Math.max(...analysis.angleDiffs);
-        const avgDiff = analysis.angleDiffs.reduce((a, b) => a + b, 0) / analysis.angleDiffs.length;
-        const threshold = avgDiff * 2.5;
-
-        // 绘制角度差柱状图
-        ctx.fillStyle = '#ff9900';
-        const barWidth = plotWidth / analysis.angleDiffs.length;
-        analysis.angleDiffs.forEach((diff, i) => {
-            const barHeight = (diff / maxDiff) * (subPlotHeight - padding.bottom - 10);
-            const x = padding.left + i * barWidth;
-            const y = subPlotY + (subPlotHeight - padding.bottom) - barHeight;
-            ctx.fillRect(x, y, barWidth - 1, barHeight);
-            
-            // 标记超过阈值的点
-            if (diff > threshold) {
-                ctx.fillStyle = '#ff0000';
-                ctx.fillRect(x, y, barWidth - 1, barHeight);
-                ctx.fillStyle = '#ff9900';
-            }
-        });
-
-        // 绘制阈值线
-        ctx.strokeStyle = '#ff0000';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([3, 3]);
-        const thresholdY = subPlotY + (subPlotHeight - padding.bottom) - (threshold / maxDiff) * (subPlotHeight - padding.bottom - 10);
-        ctx.beginPath();
-        ctx.moveTo(padding.left, thresholdY);
-        ctx.lineTo(padding.left + plotWidth, thresholdY);
-        ctx.stroke();
-        ctx.setLineDash([]);
+        // 绘制峰值点（齿顶）
+        if (analysis.peaks && analysis.peaks.length > 0) {
+            ctx.fillStyle = '#ff0000';
+            analysis.peaks.forEach(peakIdx => {
+                if (peakIdx < polarData.length) {
+                    const x = padding.left + ((thetas[peakIdx] - minTheta) / (maxTheta - minTheta || 1)) * plotWidth;
+                    const y = padding.top + plotHeight - ((rValues[peakIdx] - minR) / rRange) * plotHeight;
+                    ctx.beginPath();
+                    ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                    ctx.fill();
+                }
+            });
+        }
     }
 
     // 绘制坐标轴标签
+    console.log('绘制坐标轴标签...');
     ctx.fillStyle = '#333';
     ctx.font = '12px Arial';
     ctx.textAlign = 'center';
@@ -998,51 +1098,8 @@ function drawRThetaPlot() {
     ctx.textAlign = 'center';
     ctx.fillText('半径 r (mm)', 0, 0);
     ctx.restore();
-
-    // 绘制图例和计算结果
-    ctx.fillStyle = '#333';
-    ctx.font = '11px Arial';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
     
-    let legendY = 10;
-    ctx.fillText('方法1 (角度差): ' + (analysis.method1 || 0) + ' 齿', padding.left + plotWidth + 10, legendY);
-    legendY += 20;
-    ctx.fillText('方法2 (峰值): ' + (analysis.method2 || 0) + ' 齿', padding.left + plotWidth + 10, legendY);
-    legendY += 20;
-    ctx.fillText('方法3 (周期性): ' + (analysis.method3 || 0) + ' 齿', padding.left + plotWidth + 10, legendY);
-    legendY += 20;
-    ctx.fillStyle = '#0066cc';
-    ctx.font = '12px Arial';
-    ctx.fontWeight = 'bold';
-    ctx.fillText('最终结果: ' + (analysis.final || 0) + ' 齿', padding.left + plotWidth + 10, legendY);
-
-    // 绘制图例
-    legendY += 30;
-    ctx.font = '10px Arial';
-    ctx.fillStyle = '#0066cc';
-    ctx.fillRect(padding.left + plotWidth + 10, legendY, 15, 2);
-    ctx.fillStyle = '#333';
-    ctx.fillText('r(θ) 原始', padding.left + plotWidth + 30, legendY - 5);
-    
-    legendY += 20;
-    ctx.strokeStyle = '#00aa00';
-    ctx.setLineDash([5, 5]);
-    ctx.beginPath();
-    ctx.moveTo(padding.left + plotWidth + 10, legendY);
-    ctx.lineTo(padding.left + plotWidth + 25, legendY);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = '#333';
-    ctx.fillText('平滑后', padding.left + plotWidth + 30, legendY - 5);
-    
-    legendY += 20;
-    ctx.fillStyle = '#ff0000';
-    ctx.beginPath();
-    ctx.arc(padding.left + plotWidth + 17, legendY, 3, 0, 2 * Math.PI);
-    ctx.fill();
-    ctx.fillStyle = '#333';
-    ctx.fillText('峰值点', padding.left + plotWidth + 30, legendY - 5);
+    console.log('========== drawRThetaPlot 完成 ==========');
 }
 
 /**

@@ -213,14 +213,20 @@ body {
 .basic-params-layout {
     display: grid;
     grid-template-columns: 300px 1fr;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: 1fr auto;
     gap: var(--spacing-md);
     height: calc(100vh - 200px);
+}
+
+.basic-params-layout > .params-display {
+    grid-column: 1;
+    grid-row: 1;
 }
 
 .basic-params-layout > .circle-visualization {
     grid-column: 2;
     grid-row: 1;
+    min-height: 400px;
 }
 
 .basic-params-layout > .r-theta-plot {
@@ -229,7 +235,6 @@ body {
     background: var(--bg-secondary);
     border-radius: var(--radius-md);
     padding: var(--spacing-md);
-    min-height: 450px;
 }
 
 .r-theta-plot h4 {
@@ -240,7 +245,7 @@ body {
 
 .r-theta-plot canvas {
     width: 100%;
-    height: 400px;
+    height: 300px;
     border: 1px solid var(--border-light);
     border-radius: var(--radius-sm);
     background: var(--bg-secondary);

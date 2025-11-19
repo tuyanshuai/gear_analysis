@@ -5,10 +5,45 @@
 
 class GearAnalysis {
     constructor() {
+        // 检查依赖类是否已定义
+        console.log('GearAnalysis 构造函数开始');
+        console.log('GearFileParser:', typeof GearFileParser);
+        console.log('GearPointUtils:', typeof GearPointUtils);
+        console.log('GearToothCount:', typeof GearToothCount);
+        console.log('GearCircleFitting:', typeof GearCircleFitting);
+        console.log('GearRegistration:', typeof GearRegistration);
+        console.log('GearGrade:', typeof GearGrade);
+        
         // 初始化子模块
         this.fileParser = new GearFileParser();
         this.pointUtils = new GearPointUtils();
-        this.toothCount = new GearToothCount();
+        
+        if (typeof GearToothCount === 'undefined') {
+            console.error('GearToothCount 未定义！请检查 gear-tooth-count.js 是否已加载');
+            throw new Error('GearToothCount 未定义');
+        }
+        
+        try {
+            this.toothCount = new GearToothCount();
+            console.log('toothCount 实例创建成功:', this.toothCount);
+            console.log('toothCount 类型:', typeof this.toothCount);
+            console.log('toothCount 构造函数:', this.toothCount.constructor);
+            console.log('toothCount.calculateToothCountFromProfile:', typeof this.toothCount.calculateToothCountFromProfile);
+            
+            if (!this.toothCount) {
+                throw new Error('GearToothCount 实例创建失败，返回值为空');
+            }
+            
+            if (typeof this.toothCount.calculateToothCountFromProfile !== 'function') {
+                console.error('calculateToothCountFromProfile 不是函数！');
+                console.error('toothCount 的所有方法:', Object.getOwnPropertyNames(Object.getPrototypeOf(this.toothCount)));
+                throw new Error('calculateToothCountFromProfile 方法不存在');
+            }
+        } catch (error) {
+            console.error('创建 GearToothCount 实例时出错:', error);
+            throw error;
+        }
+        
         this.circleFitting = new GearCircleFitting();
         this.registration = new GearRegistration();
         this.grade = new GearGrade();
@@ -20,6 +55,8 @@ class GearAnalysis {
         this.addendumRadius = 0;
         this.dedendumRadius = 0;
         this.registrationTransform = null;
+        
+        console.log('GearAnalysis 构造函数完成');
     }
 
     // ========== 文件解析方法 ==========
@@ -42,10 +79,55 @@ class GearAnalysis {
 
     // ========== 齿数计算方法 ==========
     calculateToothCountFromProfile(polarData) {
+        console.log('GearAnalysis.calculateToothCountFromProfile 被调用');
+        console.log('this:', this);
+        console.log('this.toothCount:', this.toothCount);
+        console.log('this.toothCount 类型:', typeof this.toothCount);
+        
+        // 如果 toothCount 未初始化，尝试重新初始化
+        if (!this.toothCount) {
+            console.warn('this.toothCount 未初始化，尝试重新初始化...');
+            if (typeof GearToothCount !== 'undefined') {
+                try {
+                    this.toothCount = new GearToothCount();
+                    console.log('重新初始化成功:', this.toothCount);
+                } catch (error) {
+                    console.error('重新初始化失败:', error);
+                    throw new Error('toothCount 模块初始化失败: ' + error.message);
+                }
+            } else {
+                console.error('GearToothCount 类未定义！');
+                throw new Error('GearToothCount 类未定义，无法初始化 toothCount 模块');
+            }
+        }
+        
+        console.log('this.toothCount.calculateToothCountFromProfile:', typeof this.toothCount?.calculateToothCountFromProfile);
+        
+        if (typeof this.toothCount.calculateToothCountFromProfile !== 'function') {
+            console.error('this.toothCount.calculateToothCountFromProfile 不是函数！');
+            console.error('this.toothCount 的类型:', typeof this.toothCount);
+            console.error('this.toothCount 的构造函数:', this.toothCount?.constructor);
+            console.error('this.toothCount 的所有属性:', this.toothCount ? Object.keys(this.toothCount) : 'null');
+            console.error('this.toothCount 的原型方法:', this.toothCount ? Object.getOwnPropertyNames(Object.getPrototypeOf(this.toothCount)) : 'null');
+            throw new Error('calculateToothCountFromProfile 方法不存在');
+        }
+        
         const result = this.toothCount.calculateToothCountFromProfile(polarData);
         this.toothCountValue = result;
         // 保存分析结果供可视化使用
         this.toothCountAnalysis = this.toothCount.toothCountAnalysis;
+        // 调试信息
+        if (!this.toothCountAnalysis) {
+            console.warn('toothCountAnalysis 未保存，检查 toothCount 模块');
+        } else {
+            console.log('toothCountAnalysis 已保存:', {
+                method1: this.toothCountAnalysis.method1,
+                method2: this.toothCountAnalysis.method2,
+                method3: this.toothCountAnalysis.method3,
+                final: this.toothCountAnalysis.final,
+                polarDataLength: this.toothCountAnalysis.polarData?.length
+            });
+        }
         return result;
     }
 
